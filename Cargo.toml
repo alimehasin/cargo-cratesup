@@ -1,0 +1,17 @@
+[package]
+name = "cargo-cratesup"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Ali Mehasin <alimehasin@icloud.com>"]
+description = "A Cargo subcommand that scans your Cargo.toml dependencies and checks for available updates to help you keep your dependencies up-to-date."
+
+
+[dependencies]
+semver = "1.0.23"
+colored = "2.1.0"
+spinners = "4.1.1"
+toml_edit = "0.22.22"
+crates_io_api = "0.11.0"
+cargo_metadata = "0.18.1"
+clap = { version = "4.5.20", features = ["derive"] }
