@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["Ali Mehasin <alimehasin@icloud.com>"]
+repository = "https://github.com/alimehasin/cargo-cratesup"
+categories = ["command-line-utilities", "development-tools"]
+keywords = ["cargo", "cargo-subcommand", "dependency", "update", "check"]
 description = "A Cargo subcommand that scans your Cargo.toml dependencies and checks for available updates to help you keep your dependencies up-to-date."
 
 
