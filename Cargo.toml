@@ -11,10 +11,10 @@ description = "A Cargo subcommand that scans your Cargo.toml dependencies and ch
 
 
 [dependencies]
-semver = "1.0.23"
-colored = "2.1.0"
+semver = "1.0.24"
+colored = "3.0.0"
 spinners = "4.1.1"
 toml_edit = "0.22.22"
 crates_io_api = "0.11.0"
 cargo_metadata = "0.19.1"
-clap = { version = "4.5.22", features = ["derive"] }
+clap = { version = "4.5.26", features = ["derive"] }
