@@ -41,7 +41,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     for dep in &root_package.dependencies {
         let mut sp = Spinner::new(Spinners::Dots9, format!("Checking {}... ", dep.name));
 
-        let dep = helpers::check_dependency_version(&client, dep, &mut crates)?;
+        let Ok(dep) = helpers::check_dependency_version(&client, dep, &mut crates) else {
+            continue;
+        };
 
         let msg = match dep.update_available {
             true => format!(

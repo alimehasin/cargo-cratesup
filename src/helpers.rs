@@ -29,9 +29,7 @@ pub fn check_dependency_version(
     // Find the maximum version that satisfies the requirement
     let (local_version, is_prerelease) = match version_req.comparators.get(0) {
         None => {
-            eprintln!("No comparator found for {}", dep.name);
-
-            todo!();
+            return Err(format!("No comparator found for {}", dep.name).into());
         }
 
         Some(comparator) => {
