@@ -1,10 +1,27 @@
 use crate::types;
+use cargo_metadata::DependencyKind;
 use crates_io_api::SyncClient;
 use semver::{Version, VersionReq};
 use std::error::Error;
 use std::fs::{read_to_string, write};
 use std::path::Path;
-use toml_edit::{value, DocumentMut, Value};
+use toml_edit::{value, DocumentMut, Item};
+
+/// The Cargo.toml tables to walk through to reach `dep`, so that a dependency
+/// is only ever compared and updated inside the section it was declared in.
+fn dependency_table_path(dep: &cargo_metadata::Dependency) -> Vec<String> {
+    let table = match dep.kind {
+        DependencyKind::Development => "dev-dependencies",
+        DependencyKind::Build => "build-dependencies",
+        _ => "dependencies",
+    };
+
+    return match &dep.target {
+        None => vec![table.to_string()],
+
+        Some(target) => vec!["target".to_string(), target.to_string(), table.to_string()],
+    };
+}
 
 pub fn check_dependency_version(
     client: &SyncClient,
@@ -70,34 +87,50 @@ pub fn check_dependency_version(
             return "Failed to parse latest prereleases version";
         })?;
 
-    let dep = match is_prerelease {
-        false => types::Crate {
-            name: dep.name.clone(),
-            local_version: dep.req.to_string(),
-            latest_version: latest_stable_version_str.to_string(),
-            update_available: local_version < latest_stable_version,
-        },
+    let (latest_version, update_available) = match is_prerelease {
+        false => (
+            latest_stable_version_str.to_string(),
+            local_version < latest_stable_version,
+        ),
 
         true => match latest_stable_version > local_version {
-            true => types::Crate {
-                name: dep.name.clone(),
-                local_version: dep.req.to_string(),
-                latest_version: latest_stable_version_str.to_string(),
-                update_available: local_version < latest_stable_version,
-            },
+            true => (
+                latest_stable_version_str.to_string(),
+                local_version < latest_stable_version,
+            ),
 
-            false => types::Crate {
-                name: dep.name.clone(),
-                local_version: dep.req.to_string(),
-                latest_version: latest_prerelease_version_str.to_string(),
-                update_available: local_version < latest_prerelease_version,
-            },
+            false => (
+                latest_prerelease_version_str.to_string(),
+                local_version < latest_prerelease_version,
+            ),
         },
     };
 
-    crates.push(dep.clone());
+    let krate = types::Crate {
+        name: dep.name.clone(),
+        local_version: dep.req.to_string(),
+        latest_version,
+        update_available,
+        key: dep.rename.clone().unwrap_or_else(|| dep.name.clone()),
+        table_path: dependency_table_path(dep),
+    };
 
-    return Ok(dep);
+    crates.push(krate.clone());
+
+    return Ok(krate);
+}
+
+/// Look up a dependency in the exact table it was declared in, so that a dev,
+/// build or target dependency is never confused with a `[dependencies]` entry
+/// of the same name.
+fn find_dependency_mut<'a>(doc: &'a mut DocumentMut, krate: &types::Crate) -> Option<&'a mut Item> {
+    let mut table = doc.as_item_mut();
+
+    for key in &krate.table_path {
+        table = table.get_mut(key)?;
+    }
+
+    return table.get_mut(&krate.key);
 }
 
 pub fn update_cargo_toml(output: &[types::Crate]) -> Result<(), Box<dyn Error>> {
@@ -115,21 +148,21 @@ pub fn update_cargo_toml(output: &[types::Crate]) -> Result<(), Box<dyn Error>> 
 
     // Iterate over the output to check for updates
     for krate in output.iter().filter(|krate| krate.update_available) {
-        if let Some(dependencies) = cargo_toml_doc.get_mut("dependencies") {
-            if let Some(dep) = dependencies.get_mut(&krate.name) {
-                match dep.is_inline_table() {
-                    false => {
-                        *dep = value(krate.latest_version.clone());
-                    }
+        let Some(dep) = find_dependency_mut(&mut cargo_toml_doc, krate) else {
+            continue;
+        };
 
-                    true => {
-                        let v = dep.as_inline_table_mut().and_then(|t| t.get_mut("version"));
-
-                        if let Some(version) = v {
-                            *version = Value::from(krate.latest_version.clone());
-                        }
-                    }
+        match dep.as_table_like_mut() {
+            // `foo = { version = "1.0", .. }` or `[dependencies.foo]`
+            Some(table) => {
+                if let Some(version) = table.get_mut("version") {
+                    *version = value(krate.latest_version.clone());
                 }
+            }
+
+            // `foo = "1.0"`
+            None => {
+                *dep = value(krate.latest_version.clone());
             }
         }
     }

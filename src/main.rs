@@ -45,19 +45,28 @@ fn main() -> Result<(), Box<dyn Error>> {
             continue;
         };
 
+        // The same crate can be listed in several sections with different
+        // requirements, so name the section unless it is the default one
+        let section = match dep.section().as_str() {
+            "dependencies" => String::new(),
+            section => format!(" {}", format!("[{}]", section).dimmed()),
+        };
+
         let msg = match dep.update_available {
             true => format!(
-                "{} Crate {} has an update available: {} -> {}",
+                "{} Crate {}{} has an update available: {} -> {}",
                 &format!("").normal(),
                 dep.name.cyan(),
+                section,
                 dep.local_version.normal(),
                 dep.latest_version.green()
             ),
 
             false => format!(
-                "{} Crate {} is up to date",
+                "{} Crate {}{} is up to date",
                 &format!("✔").green(),
-                dep.name.cyan()
+                dep.name.cyan(),
+                section
             ),
         };
 
