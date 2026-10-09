@@ -1,7 +1,7 @@
+use crate::index::Releases;
 use crate::types;
 use cargo_metadata::DependencyKind;
-use crates_io_api::SyncClient;
-use semver::{Version, VersionReq};
+use semver::Version;
 use std::error::Error;
 use std::fs::{read_to_string, write};
 use std::path::Path;
@@ -9,115 +9,49 @@ use toml_edit::{value, DocumentMut, Item};
 
 /// The Cargo.toml tables to walk through to reach `dep`, so that a dependency
 /// is only ever compared and updated inside the section it was declared in.
-fn dependency_table_path(dep: &cargo_metadata::Dependency) -> Vec<String> {
+pub fn dependency_table_path(dep: &cargo_metadata::Dependency) -> Vec<String> {
     let table = match dep.kind {
         DependencyKind::Development => "dev-dependencies",
         DependencyKind::Build => "build-dependencies",
         _ => "dependencies",
     };
 
-    return match &dep.target {
+    match &dep.target {
         None => vec![table.to_string()],
 
         Some(target) => vec!["target".to_string(), target.to_string(), table.to_string()],
-    };
+    }
+}
+
+/// The version a dependency's requirement starts from, e.g. `1.2.0` for `^1.2`.
+/// Returns `None` when there is no version to compare against, like for a path
+/// or git dependency without a `version` key.
+pub fn required_version(dep: &cargo_metadata::Dependency) -> Option<Version> {
+    let comparator = dep.req.comparators.first()?;
+
+    let mut version = Version::new(
+        comparator.major,
+        comparator.minor.unwrap_or(0),
+        comparator.patch.unwrap_or(0),
+    );
+    version.pre = comparator.pre.clone();
+
+    Some(version)
 }
 
 pub fn check_dependency_version(
-    client: &SyncClient,
     dep: &cargo_metadata::Dependency,
-    crates: &mut Vec<types::Crate>,
-) -> Result<types::Crate, Box<dyn Error>> {
-    let res = client.get_crate(&dep.name).map_err(|e| {
-        eprintln!("Failed to get crate info for {}: {}", dep.name, e);
+    local_version: &Version,
+    releases: &Releases,
+) -> types::Crate {
+    let latest_version = releases.latest_for(local_version);
 
-        return "Failed to get crate info";
-    })?;
-
-    let version_req = VersionReq::parse(&dep.req.to_string()).map_err(|e| {
-        eprintln!(
-            "Failed to parse version requirement for {}: {}",
-            dep.name, e
-        );
-
-        return "Failed to parse version requirement";
-    })?;
-
-    // Find the maximum version that satisfies the requirement
-    let (local_version, is_prerelease) = match version_req.comparators.get(0) {
-        None => {
-            return Err(format!("No comparator found for {}", dep.name).into());
-        }
-
-        Some(comparator) => {
-            let major = comparator.major;
-            let minor = comparator.minor.unwrap_or(0);
-            let patch = comparator.patch.unwrap_or(0);
-            let pre = comparator.pre.clone();
-
-            let mut local_version = Version::new(major, minor, patch);
-            local_version.pre = pre.clone();
-
-            let is_prerelease = !pre.is_empty();
-
-            (local_version, is_prerelease)
-        }
-    };
-
-    let latest_prerelease_version_str = &res.crate_data.max_version;
-    let latest_stable_version_str = res
-        .crate_data
-        .max_stable_version
-        .as_deref()
-        .unwrap_or("0.0.0");
-
-    let latest_stable_version = Version::parse(latest_stable_version_str).map_err(|e| {
-        eprintln!("Failed to parse latest version for {}: {}", dep.name, e);
-
-        return "Failed to parse latest version";
-    })?;
-
-    let latest_prerelease_version =
-        Version::parse(&latest_prerelease_version_str).map_err(|e| {
-            eprintln!(
-                "Failed to parse latest prerelease version for {}: {}",
-                dep.name, e
-            );
-
-            return "Failed to parse latest prereleases version";
-        })?;
-
-    let (latest_version, update_available) = match is_prerelease {
-        false => (
-            latest_stable_version_str.to_string(),
-            local_version < latest_stable_version,
-        ),
-
-        true => match latest_stable_version > local_version {
-            true => (
-                latest_stable_version_str.to_string(),
-                local_version < latest_stable_version,
-            ),
-
-            false => (
-                latest_prerelease_version_str.to_string(),
-                local_version < latest_prerelease_version,
-            ),
-        },
-    };
-
-    let krate = types::Crate {
-        name: dep.name.clone(),
-        local_version: dep.req.to_string(),
-        latest_version,
-        update_available,
+    types::Crate {
+        latest_version: latest_version.to_string(),
+        update_available: local_version < latest_version,
         key: dep.rename.clone().unwrap_or_else(|| dep.name.clone()),
         table_path: dependency_table_path(dep),
-    };
-
-    crates.push(krate.clone());
-
-    return Ok(krate);
+    }
 }
 
 /// Look up a dependency in the exact table it was declared in, so that a dev,
@@ -130,7 +64,7 @@ fn find_dependency_mut<'a>(doc: &'a mut DocumentMut, krate: &types::Crate) -> Op
         table = table.get_mut(key)?;
     }
 
-    return table.get_mut(&krate.key);
+    table.get_mut(&krate.key)
 }
 
 pub fn update_cargo_toml(output: &[types::Crate]) -> Result<(), Box<dyn Error>> {
@@ -138,8 +72,8 @@ pub fn update_cargo_toml(output: &[types::Crate]) -> Result<(), Box<dyn Error>> 
     let cargo_toml_path = Path::new("Cargo.toml");
 
     // Read the current contents of Cargo.toml
-    let cargo_toml_str = read_to_string(&cargo_toml_path)
-        .map_err(|e| format!("Failed to read Cargo.toml: {}", e))?;
+    let cargo_toml_str =
+        read_to_string(cargo_toml_path).map_err(|e| format!("Failed to read Cargo.toml: {}", e))?;
 
     // Parse the Cargo.toml into a TOML document
     let mut cargo_toml_doc = cargo_toml_str
@@ -173,5 +107,5 @@ pub fn update_cargo_toml(output: &[types::Crate]) -> Result<(), Box<dyn Error>> 
 
     println!("Cargo.toml has been updated successfully");
 
-    return Ok(());
+    Ok(())
 }

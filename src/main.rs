@@ -1,14 +1,15 @@
 mod cli;
 mod helpers;
+mod index;
+mod report;
 mod types;
 
 use cargo_metadata::MetadataCommand;
 use clap::Parser;
 use cli::Commands;
 use colored::Colorize;
-use crates_io_api::SyncClient;
-use spinners::{Spinner, Spinners};
 use std::error::Error;
+use std::sync::Mutex;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = cli::Cli::parse();
@@ -17,11 +18,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         Commands::Cratesup { update } => update,
     };
 
-    // Get metadata from Cargo.toml
-    let metadata = MetadataCommand::new().exec().map_err(|e| {
+    // Get metadata from Cargo.toml, without resolving the whole dependency
+    // graph since only the root package's own dependencies are checked
+    let metadata = MetadataCommand::new().no_deps().exec().map_err(|e| {
         eprintln!("Failed to get metadata: {}", e);
 
-        return "Failed to get metadata";
+        "Failed to get metadata"
     })?;
 
     // Get root package from metadata
@@ -29,59 +31,75 @@ fn main() -> Result<(), Box<dyn Error>> {
         .root_package()
         .ok_or("Failed to find root package")?;
 
-    // Create a client to query crates.io
-    let client = SyncClient::new(
-        "crate (crate@example.com)",            // User agent string
-        std::time::Duration::from_millis(1000), // Timeout duration
-    )?;
+    // Dependencies without a version requirement, like path and git ones,
+    // have nothing to compare against
+    let deps: Vec<_> = root_package
+        .dependencies
+        .iter()
+        .filter_map(|dep| Some((dep, helpers::required_version(dep)?)))
+        .collect();
 
-    let mut crates: Vec<types::Crate> = vec![];
+    // The same crate can be listed in several sections, but is fetched once
+    let mut names: Vec<String> = deps.iter().map(|(dep, _)| dep.name.clone()).collect();
+    names.sort();
+    names.dedup();
 
-    // Check each dependencies updates
-    for dep in &root_package.dependencies {
-        let mut sp = Spinner::new(Spinners::Dots9, format!("Checking {}... ", dep.name));
+    let report = report::Report::new(
+        deps.iter()
+            .map(|(dep, _)| report::Row {
+                name: dep.name.clone(),
+                section: helpers::dependency_table_path(dep).join("."),
+                req: dep.req.to_string(),
+            })
+            .collect(),
+    );
 
-        let Ok(dep) = helpers::check_dependency_version(&client, dep, &mut crates) else {
-            continue;
-        };
+    let crates = Mutex::new(vec![]);
 
-        // The same crate can be listed in several sections with different
-        // requirements, so name the section unless it is the default one
-        let section = match dep.section().as_str() {
-            "dependencies" => String::new(),
-            section => format!(" {}", format!("[{}]", section).dimmed()),
-        };
+    // Check each dependencies updates, as soon as its crate is fetched
+    index::fetch_all_releases(&names, |name, releases| {
+        for (i, (dep, local_version)) in deps.iter().enumerate() {
+            if dep.name != name {
+                continue;
+            }
 
-        let msg = match dep.update_available {
-            true => format!(
-                "{} Crate {}{} has an update available: {} -> {}",
-                &format!("").normal(),
-                dep.name.cyan(),
-                section,
-                dep.local_version.normal(),
-                dep.latest_version.green()
-            ),
+            match &releases {
+                Ok(releases) => {
+                    let krate = helpers::check_dependency_version(dep, local_version, releases);
+                    report.finish(i, Ok(&krate));
+                    crates.lock().unwrap().push(krate);
+                }
 
-            false => format!(
-                "{} Crate {}{} is up to date",
-                &format!("✔").green(),
-                dep.name.cyan(),
-                section
-            ),
-        };
+                Err(e) => report.finish(i, Err(e)),
+            }
+        }
+    });
 
-        sp.stop_and_persist("", msg);
+    let crates = crates.into_inner().unwrap();
+    let outdated = crates.iter().filter(|krate| krate.update_available).count();
+
+    if !deps.is_empty() {
+        println!();
     }
 
-    let update_available = crates.iter().any(|krate| krate.update_available);
-    if !update_available {
+    if outdated == 0 {
         println!("All dependencies are up to date");
         return Ok(());
     }
 
-    if update_required {
-        helpers::update_cargo_toml(&crates)?;
+    match update_required {
+        true => helpers::update_cargo_toml(&crates)?,
+
+        false => println!(
+            "{} {} can be updated, run `{}` to update Cargo.toml",
+            outdated,
+            match outdated {
+                1 => "dependency",
+                _ => "dependencies",
+            },
+            "cargo cratesup -u".bold()
+        ),
     }
 
-    return Ok(());
+    Ok(())
 }

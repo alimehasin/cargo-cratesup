@@ -3,7 +3,7 @@ name = "cargo-cratesup"
 version = "0.1.4"
 edition = "2021"
 license = "MIT"
-authors = ["Ali Mehasin <alimehasin@icloud.com>"]
+authors = ["Ali Mehasin"]
 repository = "https://github.com/alimehasin/cargo-cratesup"
 categories = ["command-line-utilities", "development-tools"]
 keywords = ["cargo", "cargo-subcommand", "dependency", "update", "check"]
@@ -11,10 +11,12 @@ description = "A Cargo subcommand that scans your Cargo.toml dependencies and ch
 
 
 [dependencies]
+ureq = "3.4.2"
 semver = "1.0.28"
 colored = "3.1.1"
-spinners = "4.2.0"
+indicatif = "0.18.6"
 toml_edit = "0.25.17"
-crates_io_api = "0.12.0"
+serde_json = "1.0.151"
 cargo_metadata = "0.23.1"
 clap = { version = "4.6.7", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
