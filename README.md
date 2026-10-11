@@ -1,8 +1,11 @@
-# Cratesup
+# cargo-cratesup
 
-A Cargo subcommand that scans your Cargo.toml dependencies and checks for available updates to help you keep your dependencies up-to-date.
+[![Crates.io](https://img.shields.io/crates/v/cargo-cratesup.svg)](https://crates.io/crates/cargo-cratesup)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-https://github.com/user-attachments/assets/c25f448d-e0b3-4836-a714-6260c1dd6588
+Find outdated dependencies in your `Cargo.toml` and update them with one command.
+
+![cargo cratesup in action](docs/media/showcase.gif)
 
 ## Installation
 
@@ -12,29 +15,32 @@ cargo install cargo-cratesup
 
 ## Usage
 
-Once installed, you can use Cratesup with the following commands:
+Run it in your project's directory, next to `Cargo.toml`:
 
 ```bash
+# List the dependencies that have a newer version
 cargo cratesup
+
+# Update Cargo.toml to the latest versions
+cargo cratesup --update   # or -u
 ```
 
-This command will display a list of available updates for your dependencies without modifying your Cargo.toml file.
+Without `--update`, nothing is changed.
 
-```bash
-cargo cratesup -u
-```
-
-Add the `--update` flag or `-u` to automatically update your Cargo.toml file with the latest available versions.
+`--update` moves to the latest release, including new major versions that may have breaking changes, so review the diff and run `cargo build` afterwards.
 
 ## Features
 
-- Check for updates in your Rust project's dependencies
-- Update your Cargo.toml file with the latest available versions
+- **Fast**: crates are looked up in parallel through the crates.io sparse index, the same one Cargo uses
+- **Every section**: checks `[dependencies]`, `[dev-dependencies]`, `[build-dependencies]` and target-specific tables
+- **Minimal edits**: only the version numbers are rewritten, and the rest of `Cargo.toml` is left as it is
+- **Sensible versions**: yanked releases are ignored, and pre-releases are only suggested if you already use one
+- Path and git dependencies without a version are skipped
 
 ## Contributing
 
-Contributions are welcome! If you find a bug or have a feature request, please open an issue or submit a pull request.
+Bug reports and pull requests are welcome on [GitHub](https://github.com/alimehasin/cargo-cratesup/issues).
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+[MIT](LICENSE)
